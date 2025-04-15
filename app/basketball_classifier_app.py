@@ -20,10 +20,13 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel,
                            QPushButton, QProgressBar, QSlider)
 
 # Import styling
-from style import STYLE, RED_COLOR, LIGHT_TEXT_COLOR
+from style import STYLE, RED_COLOR, LIGHT_TEXT_COLOR, DARK_BG_COLOR
 
 # Import fluid animation
 from fluid_animation import FluidAnimation
+
+# Import settings dialog
+from settings import SettingsDialog
 
 # Constants
 MODEL_PATH = os.path.abspath("models/hypernetwork_basketball_classifier.onnx")
@@ -36,7 +39,7 @@ class BasketballClassifierApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Basketball Classifier")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(900, 600)
         self.model = None
         self.running = False
         self.last_frame = None
@@ -72,8 +75,12 @@ class BasketballClassifierApp(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
         
+        # Set background color for the central widget
+        self.central_widget.setStyleSheet(f"background-color: {DARK_BG_COLOR};")
+        
         # Loading screen
         self.loading_widget = QWidget()
+        self.loading_widget.setStyleSheet(f"background-color: {DARK_BG_COLOR};")
         loading_layout = QVBoxLayout(self.loading_widget)
         
         self.loading_label = QLabel("Loading Basketball Classifier Model...")
@@ -90,17 +97,20 @@ class BasketballClassifierApp(QMainWindow):
         
         # Main screen
         self.main_widget = QWidget()
+        self.main_widget.setStyleSheet(f"background-color: {DARK_BG_COLOR};")
         self.main_widget.hide()  # Hide until loading is complete
         content_layout = QVBoxLayout(self.main_widget)
         
         # Video display
         self.video_frame = QLabel()
         self.video_frame.setAlignment(Qt.AlignCenter)
-        self.video_frame.setMinimumHeight(400)
+        self.video_frame.setMinimumHeight(350)
+        self.video_frame.setContentsMargins(0, 0, 0, 10)  # Add bottom margin
         
         # Fluid animation widget
         self.fluid_animation = FluidAnimation(self.main_widget)
-        self.fluid_animation.setMinimumHeight(400)
+        self.fluid_animation.setMinimumHeight(350)
+        self.fluid_animation.setContentsMargins(0, 0, 0, 10)  # Add bottom margin
         self.fluid_animation.hide()  # Initially hidden
         
         # Status and controls area
@@ -110,15 +120,17 @@ class BasketballClassifierApp(QMainWindow):
         status_layout = QVBoxLayout()
         self.model_status_label = QLabel("Model Status: Ready")
         self.model_status_label.setFont(QFont("Consolas", 9))
+        self.model_status_label.setMinimumWidth(450)  # Increased to ensure full text visibility
         self.fps_label = QLabel("FPS: 0")
         self.fps_label.setFont(QFont("Consolas", 9))
         
         self.prediction_label = QLabel("Prediction: N/A")
         self.prediction_label.setFont(QFont("Consolas", 10, QFont.Bold))
-        self.prediction_label.setMinimumWidth(350)  # Increased width to ensure text fits
+        self.prediction_label.setMinimumWidth(450)  # Increased width for full text display
         
         self.confidence_label = QLabel("Confidence: 0%")
         self.confidence_label.setFont(QFont("Consolas", 10))
+        self.confidence_label.setMinimumWidth(450)  # Added minimum width for consistency
         
         status_layout.addWidget(self.model_status_label)
         status_layout.addWidget(self.fps_label)
@@ -129,20 +141,31 @@ class BasketballClassifierApp(QMainWindow):
         # Right side - controls
         buttons_layout = QVBoxLayout()
         
+        # Start/Stop capture button
         self.start_button = QPushButton("Start Capture")
         self.start_button.clicked.connect(self.toggle_capture)
         self.start_button.setEnabled(False)  # Disabled until model is loaded
+        self.start_button.setFixedWidth(220)  # Increased from 180 to 220 to fit text
+        self.start_button.setFixedHeight(36)  # Set fixed height for consistent button size
         
-        scene_layout = QHBoxLayout()
-        scene_layout.addWidget(QLabel("Scene Sensitivity:"))
-        self.scene_slider = QSlider(Qt.Horizontal)
-        self.scene_slider.setRange(1, 80)  # Increased upper range
-        self.scene_slider.setValue(int(SCENE_THRESHOLD))
-        self.scene_slider.valueChanged.connect(self.update_scene_threshold)
-        scene_layout.addWidget(self.scene_slider)
+        # Settings button
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.clicked.connect(self.open_settings)
+        self.settings_button.setFixedWidth(220)  # Same width as start button
+        self.settings_button.setFixedHeight(36)  # Same height as start button
         
-        buttons_layout.addWidget(self.start_button)
-        buttons_layout.addLayout(scene_layout)
+        # Add widgets to buttons layout with right alignment
+        button_container = QHBoxLayout()
+        button_container.addStretch()  # Push button to the right
+        button_container.addWidget(self.start_button)
+        buttons_layout.addLayout(button_container)
+        
+        # Add settings button with the same alignment
+        settings_container = QHBoxLayout()
+        settings_container.addStretch()  # Push button to the right
+        settings_container.addWidget(self.settings_button)
+        buttons_layout.addLayout(settings_container)
+        
         buttons_layout.addStretch()
         
         # Combine status and controls
@@ -152,6 +175,10 @@ class BasketballClassifierApp(QMainWindow):
         # Add all components to main layout
         content_layout.addWidget(self.video_frame)
         content_layout.addWidget(self.fluid_animation)
+        
+        # Add spacing between video/animation and controls
+        content_layout.addSpacing(20)  # Add 20px spacing
+        
         content_layout.addLayout(controls_layout)
         
         # Add both screens to main layout
@@ -290,8 +317,13 @@ class BasketballClassifierApp(QMainWindow):
             print(f"Error in immediate frame capture: {e}")
             print(traceback.format_exc())
 
-    def update_scene_threshold(self, value):
-        self.scene_change_threshold = value
+    def open_settings(self):
+        """Open the settings dialog"""
+        dialog = SettingsDialog(self, self.scene_change_threshold)
+        if dialog.exec_():
+            # If user clicked Apply
+            self.scene_change_threshold = dialog.get_threshold()
+            print(f"Scene sensitivity updated to: {self.scene_change_threshold}")
 
     def process_frame(self):
         try:
