@@ -319,7 +319,7 @@ class BasketballClassifierApp(QMainWindow):
 
     def open_settings(self):
         """Open the settings dialog"""
-        dialog = SettingsDialog(self, self.scene_change_threshold)
+        dialog = SettingsDialog(self, self.scene_change_threshold, self.fps)
         if dialog.exec_():
             # If user clicked Apply
             self.scene_change_threshold = dialog.get_threshold()
