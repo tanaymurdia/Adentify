@@ -3,6 +3,8 @@ Styling for the Basketball Classifier application.
 This file contains the styling constants used throughout the app.
 """
 
+from PyQt5.QtGui import  QColor
+
 # App styling
 STYLE = """
 QWidget {
@@ -66,6 +68,6 @@ QSlider::handle:horizontal {
 
 # Color constants
 RED_COLOR = "#ff3e3e"
-DARK_BG_COLOR = "#121212"
+DARK_BG_COLOR = "#000000"
 LIGHT_TEXT_COLOR = "#f1f1f1"
 SECONDARY_BG_COLOR = "#1e1e1e" 

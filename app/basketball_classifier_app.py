@@ -22,6 +22,9 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel,
 # Import styling
 from style import STYLE, RED_COLOR, LIGHT_TEXT_COLOR
 
+# Import fluid animation
+from fluid_animation import FluidAnimation
+
 # Constants
 MODEL_PATH = os.path.abspath("models/hypernetwork_basketball_classifier.onnx")
 TARGET_SIZE = 224
@@ -95,6 +98,11 @@ class BasketballClassifierApp(QMainWindow):
         self.video_frame.setAlignment(Qt.AlignCenter)
         self.video_frame.setMinimumHeight(400)
         
+        # Fluid animation widget
+        self.fluid_animation = FluidAnimation(self.main_widget)
+        self.fluid_animation.setMinimumHeight(400)
+        self.fluid_animation.hide()  # Initially hidden
+        
         # Status and controls area
         controls_layout = QHBoxLayout()
         
@@ -143,6 +151,7 @@ class BasketballClassifierApp(QMainWindow):
         
         # Add all components to main layout
         content_layout.addWidget(self.video_frame)
+        content_layout.addWidget(self.fluid_animation)
         content_layout.addLayout(controls_layout)
         
         # Add both screens to main layout
@@ -192,6 +201,11 @@ class BasketballClassifierApp(QMainWindow):
         if success:
             self.start_button.setEnabled(True)
             self.model_status_label.setText(f"Model Status: Loaded ({message})")
+            
+            # Show fluid animation on startup
+            self.video_frame.hide()
+            self.fluid_animation.show()
+            self.fluid_animation.start_animation()
         else:
             self.model_status_label.setText(f"Model Error: {message}")
             self.prediction_label.setText("Prediction: Error")
@@ -199,43 +213,82 @@ class BasketballClassifierApp(QMainWindow):
 
     def toggle_capture(self):
         if not self.running:
-            # Start capturing
+            # Start capture
             self.running = True
             self.start_button.setText("Stop Capture")
             
-            # Reset state for new capture
+            # Reset frame detection state
             self.last_frame = None
             self.prev_frame = None
             
-            # Clear any previous text from the video frame
-            self.video_frame.clear()
-            self.video_frame.setStyleSheet("")  # Reset any styling
+            # Hide fluid animation and show video frame
+            self.fluid_animation.stop_animation()
+            self.fluid_animation.hide()
+            self.video_frame.show()
             
-            # Reset labels to default state
-            self.model_status_label.setText("Model Status: Ready")
-            self.prediction_label.setText("Prediction: N/A")
-            self.prediction_label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR}; font-size: 10pt; font-weight: bold;")
-            self.confidence_label.setText("Confidence: 0%")
+            # Force an immediate frame capture and classification
+            self.immediate_process_frame()
             
-            # Start the timer
+            # Then start the regular timer
             self.timer.start(CAPTURE_INTERVAL)
         else:
-            # Stop capturing
+            # Stop capture
             self.running = False
             self.start_button.setText("Start Capture")
             self.timer.stop()
             
-            # Clear the video display
-            self.video_frame.clear()
-            self.video_frame.setText("Capture Stopped")
-            self.video_frame.setAlignment(Qt.AlignCenter)
-            self.video_frame.setStyleSheet(f"color: {RED_COLOR}; font-size: 12pt;")
+            # Switch to fluid animation
+            self.video_frame.hide()
+            self.fluid_animation.show()
+            self.fluid_animation.start_animation()
             
             # Reset prediction info
             self.prediction_label.setText("Prediction: N/A")
             self.prediction_label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR}; font-size: 10pt; font-weight: bold;")
             self.confidence_label.setText("Confidence: 0%")
             self.model_status_label.setText("Model Status: Idle")
+
+    def immediate_process_frame(self):
+        """Process a frame immediately without waiting for the timer"""
+        try:
+            # Capture screen
+            screen = ImageGrab.grab()
+            
+            # Convert to numpy array
+            frame = np.array(screen)
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            
+            # Resize for display while preserving aspect ratio
+            h, w, _ = frame.shape
+            ratio = min(780 / w, 380 / h)
+            display_frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+            
+            # Initialize frame detection state
+            self.last_frame = display_frame.copy()
+            self.prev_frame = display_frame.copy()
+            
+            # Prepare for display
+            display_img = QImage(display_frame.data, display_frame.shape[1], display_frame.shape[0], 
+                              display_frame.strides[0], QImage.Format_RGB888).rgbSwapped()
+            
+            # Add info overlay with processing indicator
+            pixmap = QPixmap.fromImage(display_img)
+            painter = QPainter(pixmap)
+            painter.setPen(QPen(QColor(255, 62, 62), 3))  # Always use processing indicator for immediate frame
+            painter.drawRect(5, 5, pixmap.width() - 10, pixmap.height() - 10)
+            painter.end()
+            
+            self.video_frame.setPixmap(pixmap)
+            
+            # Always run inference on the immediate frame
+            if self.model is not None:
+                # Run in the current thread for immediate feedback
+                self.run_inference(frame)
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in immediate frame capture: {e}")
+            print(traceback.format_exc())
 
     def update_scene_threshold(self, value):
         self.scene_change_threshold = value

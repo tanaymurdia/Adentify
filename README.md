@@ -10,7 +10,7 @@ Adentify is an intelligent desktop application that uses deep learning to automa
 
 - **Real-time Screen Analysis**: Captures and analyzes screen content in real-time
 - **Intelligent Scene Detection**: Optimizes processing by detecting meaningful frame changes
-- **Modern Cyberpunk UI**: Black and red-themed interface with performance metrics
+- **Modern UI**: Black and red-themed interface with performance metrics
 - **GPU Acceleration**: Utilizes CUDA for faster inference when available
 - **Adjustable Sensitivity**: Control how aggressively the model processes frames
 
