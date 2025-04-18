@@ -489,6 +489,15 @@ class BasketballClassifierApp(QMainWindow):
             # Switch to overlay mode
             self.overlay_mode = True
             self.overlay_button.setText("Exit Overlay")
+            
+            # Make sure overlay shows the correct initial button state
+            if not self.running:
+                self.overlay.toggle_button.setText("▶")
+            else:
+                self.overlay.toggle_button.setText("‖")
+            
+            self.overlay.running = self.running  # Sync running state
+            
             self.hide()  # Hide main window
             self.overlay.show()  # Show overlay
         else:
@@ -512,8 +521,12 @@ class BasketballClassifierApp(QMainWindow):
             # Start capture
             self.toggle_capture()
         
-        # Update overlay button state to match
-        self.overlay.toggle_button.setText("⏸️" if self.running else "▶️")
+        # Update overlay button state to match with correct styling
+        if self.running:
+            self.overlay.toggle_button.setText("‖")
+        else:
+            self.overlay.toggle_button.setText("▶")
+            
         self.overlay.running = self.running
 
 
