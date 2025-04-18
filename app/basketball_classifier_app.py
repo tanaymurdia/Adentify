@@ -28,6 +28,9 @@ from fluid_animation import FluidAnimation
 # Import settings dialog
 from settings import SettingsDialog
 
+# Import overlay
+from overlay import ClassifierOverlay
+
 # Constants
 MODEL_PATH = os.path.abspath("models/hypernetwork_basketball_classifier.onnx")
 TARGET_SIZE = 224
@@ -48,6 +51,12 @@ class BasketballClassifierApp(QMainWindow):
         self.fps = 0
         self.last_fps_update = time.time()
         self.scene_change_threshold = SCENE_THRESHOLD
+        self.overlay_mode = False
+        
+        # Create overlay
+        self.overlay = ClassifierOverlay()
+        self.overlay.exitOverlay.connect(self.exit_overlay_mode)
+        self.overlay.toggle_button.clicked.connect(self.overlay_toggle_capture)
         
         # Center the window
         self.center_on_screen()
@@ -148,6 +157,13 @@ class BasketballClassifierApp(QMainWindow):
         self.start_button.setFixedWidth(220)  # Increased from 180 to 220 to fit text
         self.start_button.setFixedHeight(36)  # Set fixed height for consistent button size
         
+        # Start Overlay button
+        self.overlay_button = QPushButton("Start Overlay")
+        self.overlay_button.clicked.connect(self.toggle_overlay_mode)
+        self.overlay_button.setEnabled(False)  # Disabled until model is loaded
+        self.overlay_button.setFixedWidth(220)  # Same width as other buttons
+        self.overlay_button.setFixedHeight(36)  # Same height as other buttons
+        
         # Settings button
         self.settings_button = QPushButton("Settings")
         self.settings_button.clicked.connect(self.open_settings)
@@ -159,6 +175,12 @@ class BasketballClassifierApp(QMainWindow):
         button_container.addStretch()  # Push button to the right
         button_container.addWidget(self.start_button)
         buttons_layout.addLayout(button_container)
+        
+        # Add overlay button with the same alignment
+        overlay_container = QHBoxLayout()
+        overlay_container.addStretch()  # Push button to the right
+        overlay_container.addWidget(self.overlay_button)
+        buttons_layout.addLayout(overlay_container)
         
         # Add settings button with the same alignment
         settings_container = QHBoxLayout()
@@ -227,6 +249,7 @@ class BasketballClassifierApp(QMainWindow):
         
         if success:
             self.start_button.setEnabled(True)
+            self.overlay_button.setEnabled(True)  # Enable overlay button when model is loaded
             self.model_status_label.setText(f"Model Status: Loaded ({message})")
             
             # Show fluid animation on startup
@@ -455,6 +478,43 @@ class BasketballClassifierApp(QMainWindow):
         
         # Update model status with inference time
         self.model_status_label.setText(f"Model Status: Inference in {inference_time*1000:.1f}ms")
+        
+        # Update overlay if it's active
+        if self.overlay_mode:
+            self.overlay.update_prediction(is_basketball, confidence)
+
+    def toggle_overlay_mode(self):
+        """Toggle between main window and overlay mode"""
+        if not self.overlay_mode:
+            # Switch to overlay mode
+            self.overlay_mode = True
+            self.overlay_button.setText("Exit Overlay")
+            self.hide()  # Hide main window
+            self.overlay.show()  # Show overlay
+        else:
+            # Exit overlay mode
+            self.exit_overlay_mode()
+
+    def exit_overlay_mode(self):
+        """Exit overlay mode and return to main window"""
+        self.overlay_mode = False
+        self.overlay_button.setText("Start Overlay")
+        self.overlay.hide()  # Hide overlay
+        self.show()  # Show main window
+        self.activateWindow()  # Focus main window
+
+    def overlay_toggle_capture(self):
+        """Handle toggle capture from overlay"""
+        if self.running:
+            # Stop capture
+            self.toggle_capture()
+        else:
+            # Start capture
+            self.toggle_capture()
+        
+        # Update overlay button state to match
+        self.overlay.toggle_button.setText("⏸️" if self.running else "▶️")
+        self.overlay.running = self.running
 
 
 def main():
