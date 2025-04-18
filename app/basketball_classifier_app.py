@@ -17,7 +17,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QFont, QColor, QPainter, QPen
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, 
                            QVBoxLayout, QHBoxLayout, QWidget, 
-                           QPushButton, QProgressBar, QSlider)
+                           QPushButton, QProgressBar, QSlider, QCheckBox)
 
 # Import styling
 from style import STYLE, RED_COLOR, LIGHT_TEXT_COLOR, DARK_BG_COLOR
@@ -31,12 +31,17 @@ from settings import SettingsDialog
 # Import overlay
 from overlay import ClassifierOverlay
 
+# Import volume controller
+from functionality import VolumeController
+
 # Constants
 MODEL_PATH = os.path.abspath("models/hypernetwork_basketball_classifier.onnx")
 TARGET_SIZE = 224
 CAPTURE_INTERVAL = 500  # ms
 SCENE_THRESHOLD = 30.0  # threshold for scene change detection
 FPS_UPDATE_INTERVAL = 1000  # ms
+HISTORY_SIZE = 4  # Number of predictions to keep in history
+MIN_CONSENSUS_CONFIDENCE = 65.0  # Minimum confidence level for strong consensus
 
 class BasketballClassifierApp(QMainWindow):
     def __init__(self):
@@ -52,6 +57,16 @@ class BasketballClassifierApp(QMainWindow):
         self.last_fps_update = time.time()
         self.scene_change_threshold = SCENE_THRESHOLD
         self.overlay_mode = False
+        
+        # Volume control setup
+        self.volume_controller = VolumeController()
+        self.volume_control_enabled = True
+        
+        # Prediction history tracking
+        self.prediction_history = []  # List of (is_basketball, confidence) tuples
+        self.history_labels = []  # List of QLabel widgets for history display
+        self.consensus_prediction = None  # The stable consensus prediction
+        self.consensus_confidence = 0.0  # Confidence in the consensus
         
         # Create overlay
         self.overlay = ClassifierOverlay()
@@ -133,18 +148,53 @@ class BasketballClassifierApp(QMainWindow):
         self.fps_label = QLabel("FPS: 0")
         self.fps_label.setFont(QFont("Consolas", 9))
         
-        self.prediction_label = QLabel("Prediction: N/A")
-        self.prediction_label.setFont(QFont("Consolas", 10, QFont.Bold))
+        # Consensus prediction (stable output from multiple frames)
+        self.consensus_label = QLabel("CONSENSUS: N/A")
+        self.consensus_label.setFont(QFont("Consolas", 11, QFont.Bold))
+        self.consensus_label.setMinimumWidth(450)
+        
+        # Current frame prediction
+        self.prediction_label = QLabel("Current Frame: N/A")
+        self.prediction_label.setFont(QFont("Consolas", 10))
         self.prediction_label.setMinimumWidth(450)  # Increased width for full text display
         
         self.confidence_label = QLabel("Confidence: 0%")
         self.confidence_label.setFont(QFont("Consolas", 10))
         self.confidence_label.setMinimumWidth(450)  # Added minimum width for consistency
         
+        # Volume status
+        self.volume_label = QLabel("Volume control: Active")
+        self.volume_label.setFont(QFont("Consolas", 9))
+        
+        # Volume control toggle
+        self.volume_checkbox = QCheckBox("Enable volume control")
+        self.volume_checkbox.setChecked(True)
+        self.volume_checkbox.toggled.connect(self.toggle_volume_control)
+        
+        # Prediction history section
+        history_title = QLabel("Recent Predictions:")
+        history_title.setFont(QFont("Consolas", 9, QFont.Bold))
+        
         status_layout.addWidget(self.model_status_label)
         status_layout.addWidget(self.fps_label)
+        status_layout.addWidget(self.consensus_label)
         status_layout.addWidget(self.prediction_label)
         status_layout.addWidget(self.confidence_label)
+        status_layout.addWidget(self.volume_label)
+        status_layout.addWidget(self.volume_checkbox)
+        status_layout.addWidget(history_title)
+        
+        # Add history labels
+        history_layout = QHBoxLayout()
+        for i in range(HISTORY_SIZE):
+            label = QLabel(f"{i+1}: N/A")
+            label.setFont(QFont("Consolas", 9))
+            label.setMinimumWidth(100)
+            self.history_labels.append(label)
+            history_layout.addWidget(label)
+        
+        history_layout.addStretch()
+        status_layout.addLayout(history_layout)
         status_layout.addStretch()
         
         # Right side - controls
@@ -211,6 +261,22 @@ class BasketballClassifierApp(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.process_frame)
 
+    def toggle_volume_control(self, enabled):
+        """Enable or disable volume control functionality"""
+        self.volume_control_enabled = enabled
+        if enabled:
+            self.volume_label.setText("Volume control: Active")
+            # Update volume based on current consensus
+            if self.consensus_prediction is not None:
+                self.volume_controller.update_classification(
+                    self.consensus_prediction, 
+                    self.consensus_confidence
+                )
+        else:
+            self.volume_label.setText("Volume control: Disabled")
+            # Restore original volume
+            self.volume_controller.restore_volume()
+
     def load_model(self):
         try:
             # Simulate longer loading for UX purposes
@@ -258,7 +324,7 @@ class BasketballClassifierApp(QMainWindow):
             self.fluid_animation.start_animation()
         else:
             self.model_status_label.setText(f"Model Error: {message}")
-            self.prediction_label.setText("Prediction: Error")
+            self.prediction_label.setText("Current Frame: Error")
             self.prediction_label.setStyleSheet(f"color: {RED_COLOR};")
 
     def toggle_capture(self):
@@ -270,6 +336,15 @@ class BasketballClassifierApp(QMainWindow):
             # Reset frame detection state
             self.last_frame = None
             self.prev_frame = None
+            
+            # Reset prediction history and consensus
+            self.prediction_history = []
+            self.consensus_prediction = None
+            self.consensus_confidence = 0.0
+            
+            for label in self.history_labels:
+                label.setText("N/A")
+                label.setStyleSheet("")
             
             # Hide fluid animation and show video frame
             self.fluid_animation.stop_animation()
@@ -293,10 +368,97 @@ class BasketballClassifierApp(QMainWindow):
             self.fluid_animation.start_animation()
             
             # Reset prediction info
-            self.prediction_label.setText("Prediction: N/A")
-            self.prediction_label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR}; font-size: 10pt; font-weight: bold;")
+            self.prediction_label.setText("Current Frame: N/A")
+            self.prediction_label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR}; font-size: 10pt;")
             self.confidence_label.setText("Confidence: 0%")
+            self.consensus_label.setText("CONSENSUS: N/A")
+            self.consensus_label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR}; font-size: 11pt; font-weight: bold;")
             self.model_status_label.setText("Model Status: Idle")
+            
+            # Restore volume when stopping
+            if self.volume_control_enabled:
+                self.volume_controller.restore_volume()
+
+    def calculate_consensus(self):
+        """Calculate a stable consensus prediction from history"""
+        if not self.prediction_history:
+            return None, 0.0
+        
+        # Count basketball and non-basketball predictions
+        basketball_count = sum(1 for is_bb, _ in self.prediction_history if is_bb)
+        not_basketball_count = len(self.prediction_history) - basketball_count
+        
+        # Calculate weights based on:
+        # 1. Recency (newer predictions have more weight)
+        # 2. Confidence magnitude (high and low confidences have more weight than mid-range)
+        recency_weights = [max(0.5, 1.0 - 0.15 * i) for i in range(len(self.prediction_history))]
+        
+        basketball_confidence = 0.0
+        not_basketball_confidence = 0.0
+        effective_bb_count = 0
+        effective_not_bb_count = 0
+        
+        for i, (is_bb, conf) in enumerate(self.prediction_history):
+            # Calculate confidence magnitude weight
+            # - Predictions close to 0.5 get reduced weight (uncertain)
+            # - Predictions close to 0 or 1 get increased weight (certain)
+            confidence_certainty = abs(conf - 0.5) * 2  # 0.0 for conf=0.5, 1.0 for conf=0 or 1
+            confidence_weight = 0.5 + confidence_certainty  # Range from 0.5 to 1.5
+            
+            # Combine recency and confidence weights
+            combined_weight = recency_weights[i] * confidence_weight
+            
+            if is_bb:
+                basketball_confidence += combined_weight * conf
+                effective_bb_count += combined_weight
+            else:
+                not_basketball_confidence += combined_weight * (1.0 - conf)
+                effective_not_bb_count += combined_weight
+        
+        # Normalize confidences
+        if effective_bb_count > 0:
+            basketball_confidence /= effective_bb_count
+        if effective_not_bb_count > 0:
+            not_basketball_confidence /= effective_not_bb_count
+        
+        # Determine consensus using effective counts
+        if effective_bb_count > effective_not_bb_count * 1.1:  # 10% threshold for stability
+            return True, basketball_confidence * 100
+        elif effective_not_bb_count > effective_bb_count * 1.1:
+            return False, not_basketball_confidence * 100
+        else:
+            # If counts are close, use the class with higher confidence
+            if basketball_confidence > not_basketball_confidence:
+                return True, basketball_confidence * 100
+            else:
+                return False, not_basketball_confidence * 100
+
+    def get_confidence_trend(self):
+        """Determine if confidence is trending up, down or stable"""
+        if len(self.prediction_history) < 2:
+            return "stable"
+            
+        # Get the last two confidences for the consensus class
+        confidences = []
+        is_consensus = self.consensus_prediction
+        
+        for is_bb, conf in self.prediction_history[:2]:
+            if is_bb == is_consensus:
+                confidences.append(conf)
+            else:
+                confidences.append(1.0 - conf)
+                
+        if len(confidences) < 2:
+            return "stable"
+            
+        diff = confidences[0] - confidences[1]
+        
+        if abs(diff) < 0.05:  # Less than 5% change
+            return "stable"
+        elif diff > 0:
+            return "increasing"
+        else:
+            return "decreasing"
 
     def immediate_process_frame(self):
         """Process a frame immediately without waiting for the timer"""
@@ -416,7 +578,6 @@ class BasketballClassifierApp(QMainWindow):
             
             # Only run inference if scene changed significantly
             if should_process and self.model is not None:
-                print("Running inference on new frame")
                 threading.Thread(target=self.run_inference, args=(frame,)).start()
 
         except Exception as e:
@@ -462,15 +623,15 @@ class BasketballClassifierApp(QMainWindow):
 
     @QtCore.pyqtSlot(bool, float, float)
     def update_prediction(self, is_basketball, confidence, inference_time):
-        # Update prediction labels
-        prediction_text = "BASKETBALL" if is_basketball else "NOT BASKETBALL"
-        self.prediction_label.setText(f"Prediction: {prediction_text}")
+        # Update prediction labels for current frame
+        prediction_text = "Basketball" if is_basketball else "Not Basketball"
+        self.prediction_label.setText(f"Current Frame: {prediction_text}")
         
         # Set color based on prediction
         if is_basketball:
-            self.prediction_label.setStyleSheet(f"color: {RED_COLOR}; font-size: 10pt; font-weight: bold;")
+            self.prediction_label.setStyleSheet(f"color: {RED_COLOR}; font-size: 10pt;")
         else:
-            self.prediction_label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR}; font-size: 10pt; font-weight: bold;")
+            self.prediction_label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR}; font-size: 10pt;")
         
         # Update confidence
         confidence_pct = confidence * 100 if is_basketball else (1 - confidence) * 100
@@ -479,9 +640,81 @@ class BasketballClassifierApp(QMainWindow):
         # Update model status with inference time
         self.model_status_label.setText(f"Model Status: Inference in {inference_time*1000:.1f}ms")
         
+        # Add to prediction history
+        self.prediction_history.insert(0, (is_basketball, confidence))
+        
+        # Trim history to max size
+        if len(self.prediction_history) > HISTORY_SIZE:
+            self.prediction_history = self.prediction_history[:HISTORY_SIZE]
+        
+        # Calculate consensus from history
+        prev_consensus = self.consensus_prediction
+        self.consensus_prediction, self.consensus_confidence = self.calculate_consensus()
+        confidence_trend = self.get_confidence_trend()
+        
+        # Update consensus label
+        if self.consensus_prediction is not None:
+            consensus_text = "BASKETBALL" if self.consensus_prediction else "NOT BASKETBALL"
+            
+            # Add trend indicator
+            if confidence_trend == "increasing":
+                trend_indicator = " ↑"
+            elif confidence_trend == "decreasing":
+                trend_indicator = " ↓"
+            else:
+                trend_indicator = " ="
+                
+            self.consensus_label.setText(f"CONSENSUS: {consensus_text} ({self.consensus_confidence:.1f}%){trend_indicator}")
+            
+            # High confidence consensus gets stronger styling
+            if self.consensus_confidence >= MIN_CONSENSUS_CONFIDENCE:
+                if self.consensus_prediction:
+                    self.consensus_label.setStyleSheet(f"color: {RED_COLOR}; font-size: 11pt; font-weight: bold;")
+                else:
+                    self.consensus_label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR}; font-size: 11pt; font-weight: bold;")
+            else:
+                # Lower confidence gets less prominent styling
+                if self.consensus_prediction:
+                    self.consensus_label.setStyleSheet(f"color: {RED_COLOR}; font-size: 11pt; font-style: italic;")
+                else:
+                    self.consensus_label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR}; font-size: 11pt; font-style: italic;")
+        
+        # Update history display
+        for i, label in enumerate(self.history_labels):
+            if i < len(self.prediction_history):
+                hist_is_basketball, hist_confidence = self.prediction_history[i]
+                hist_text = "Basketball" if hist_is_basketball else "Not Basketball"
+                hist_confidence_pct = hist_confidence * 100 if hist_is_basketball else (1 - hist_confidence) * 100
+                label.setText(f"{i+1}: {hist_text} ({hist_confidence_pct:.1f}%)")
+                
+                # Set color based on prediction
+                if hist_is_basketball:
+                    label.setStyleSheet(f"color: {RED_COLOR};")
+                else:
+                    label.setStyleSheet(f"color: {LIGHT_TEXT_COLOR};")
+            else:
+                label.setText(f"{i+1}: N/A")
+                label.setStyleSheet("")
+        
+        # Update volume control if consensus changed or confidence changed significantly
+        if self.volume_control_enabled and self.consensus_prediction is not None:
+            # Only adjust volume if consensus changed or on first prediction
+            if prev_consensus != self.consensus_prediction or prev_consensus is None:
+                self.volume_controller.update_classification(
+                    self.consensus_prediction, 
+                    self.consensus_confidence
+                )
+        
         # Update overlay if it's active
         if self.overlay_mode:
-            self.overlay.update_prediction(is_basketball, confidence)
+            # Use consensus prediction for overlay instead of single frame
+            if self.consensus_prediction is not None:
+                self.overlay.update_prediction(
+                    self.consensus_prediction, 
+                    self.consensus_confidence / 100.0  # Convert back to 0-1 scale
+                )
+            else:
+                self.overlay.update_prediction(is_basketball, confidence)
 
     def toggle_overlay_mode(self):
         """Toggle between main window and overlay mode"""
@@ -528,6 +761,12 @@ class BasketballClassifierApp(QMainWindow):
             self.overlay.toggle_button.setText("▶")
             
         self.overlay.running = self.running
+        
+    def closeEvent(self, event):
+        """Handle application close event"""
+        # Restore volume to original level
+        self.volume_controller.restore_volume()
+        super().closeEvent(event)
 
 
 def main():

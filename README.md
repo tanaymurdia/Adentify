@@ -1,51 +1,86 @@
 # Adentify
 
-A real-time basketball content detection application.
-
-## Project Overview
-
-Adentify is an intelligent desktop application that uses deep learning to automatically identify basketball content in real-time through screen capture and analysis.
+A standalone desktop application that uses machine learning to detect basketball content in real-time, with smart volume control that automatically adjusts based on content detection.
 
 ## Features
 
-- **Real-time Screen Analysis**: Captures and analyzes screen content in real-time
-- **Intelligent Scene Detection**: Optimizes processing by detecting meaningful frame changes
-- **Modern UI**: Black and red-themed interface with performance metrics
-- **GPU Acceleration**: Utilizes CUDA for faster inference when available
-- **Adjustable Sensitivity**: Control how aggressively the model processes frames
+- **Real-time Basketball Detection**: Identifies basketball content directly from your screen using a specialized ONNX model
+- **Temporal Consensus System**: Uses a weighted voting system across multiple frames to reduce fluctuations and provide stable predictions
+- **Smart Volume Control**: 
+  - Automatically lowers volume when non-basketball content is detected
+  - Remembers your preferred volume level for basketball content
+  - Provides smooth audio fades between states
+  - Adapts to user volume preferences dynamically
+- **Confidence-Based Prediction**: High confidence predictions have more influence than uncertain ones
+- **History Tracking**: Displays the last several classification results to show trends
+- **Multiple Viewing Modes**:
+  - Full application with detailed information
+  - Minimal overlay mode for use while watching content
+- **Scene Change Detection**: Optimizes processing by only analyzing when significant visual changes occur
 
 ## Installation
 
-### Requirements
+1. Clone this repository:
+   ```
+   git clone https://github.com/yourusername/Adentify.git
+   cd Adentify
+   ```
 
-- Windows OS
-- Python 3.7+
-- Required packages:
+2. Install the required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-```bash
-pip install -r requirements.txt
+3. Ensure you have the ONNX model file in the correct location:
+   ```
+   models/hypernetwork_basketball_classifier.onnx
+   ```
+
+## Running Adentify
+
+Simply run the main application file:
+
+```
+python app/basketball_classifier_app.py
 ```
 
 ## Usage
 
-1. Ensure the ONNX model is in the correct location:
-   `models/hypernetwork_basketball_classifier.onnx`
+1. **Start Capture**: Click the "Start Capture" button to begin detecting basketball content
+2. **Volume Control**: Adentify will automatically:
+   - Maintain your preferred volume when basketball is detected
+   - Reduce volume by 80% when non-basketball content is shown
+   - Smoothly transition between these states
 
-2. Run the application:
-   ```bash
-   cd app
-   python basketball_classifier_app.py
-   ```
+3. **Overlay Mode**: Click "Start Overlay" for a minimal floating display that shows just the essential information
 
-3. After the model loads, click "Start Capture" to begin analyzing your screen
-4. Adjust the scene sensitivity slider to control detection threshold
-5. The application will highlight when basketball content is detected
+4. **Reading the Display**:
+   - The "CONSENSUS" indicator shows the stable classification across multiple frames
+   - "Current Frame" shows the classification for just the latest frame
+   - The history display shows recent predictions with their confidence levels
+   - Trend indicators (↑, ↓, =) show if confidence is increasing, decreasing, or stable
 
-## Architecture
+5. **Settings**: Adjust scene sensitivity and other parameters through the Settings button
 
-- **PyQt5-based UI**: Modern interface with real-time metrics
-- **ONNX Runtime**: Efficient model execution with GPU support when available
-- **Intelligent Frame Processing**: Scene change detection to optimize performance
+## How It Works
+
+- The system uses a consensus algorithm that considers both:
+  - Recency (newer frames matter more than older ones)
+  - Confidence (high confidence predictions have more influence)
+  
+- The volume control system:
+  - Tracks what volume level you prefer during basketball content
+  - Reduces volume during non-basketball content
+  - Smoothly fades between states to avoid jarring changes
+  - Automatically restores your preferred level when basketball returns
+
+- Detection uses scene change analysis to avoid redundant processing and provide responsive performance
+
+## Requirements
+
+- Windows operating system
+- Python 3.6 or higher
+- GPU support recommended but not required
 
 ## License
 

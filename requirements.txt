@@ -1,0 +1,14 @@
+# Basketball Classifier Application Requirements
+
+# Core dependencies
+numpy>=1.19.0
+opencv-python>=4.5.0
+Pillow>=8.0.0
+onnxruntime>=1.8.0
+
+# Audio control
+pycaw>=20181226
+comtypes>=1.1.10
+
+# GUI
+PyQt5>=5.15.0 
