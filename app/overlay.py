@@ -1,236 +1,304 @@
 #!/usr/bin/env python
 """
 Basketball Classifier Overlay
-This provides a minimized transparent overlay for the basketball classifier app.
+This provides a minimized transparent overlay with a glowing edge effect,
+with a rounded rectangle border that gradiently merges into the background.
+Fixed paintEvent to use layered rounded rectangles with color blending
+from RED_COLOR at the outside to DARK_BG_COLOR at the inside of the glow.
 """
 import os
 import sys
 import time
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QRect, QPoint, QRectF
-from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QBrush, QRadialGradient, QLinearGradient, QPainterPath
-from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, 
-                           QVBoxLayout, QHBoxLayout, 
-                           QPushButton)
+from PyQt5.QtGui import (QFont, QColor, QPainter, QPen, QBrush,
+                         QRadialGradient, QLinearGradient, QPainterPath)
+from PyQt5.QtWidgets import (QApplication, QWidget, QLabel,
+                             QVBoxLayout, QHBoxLayout,
+                             QPushButton)
 
-# Import styling constants
-from style import RED_COLOR, LIGHT_TEXT_COLOR, DARK_BG_COLOR
+# Import styling constants (or use defaults)
+try:
+    from style import RED_COLOR, LIGHT_TEXT_COLOR, DARK_BG_COLOR
+except ImportError:
+    print("Warning: style.py not found. Using default colors.")
+    RED_COLOR = "#FF3C3C"
+    LIGHT_TEXT_COLOR = "#FFFFFF"
+    DARK_BG_COLOR = "#141414"
 
-# Create QColor object from RED_COLOR (handling whether it's a string or already a QColor)
+
+# Create QColor objects
 RED_QCOLOR = QColor(RED_COLOR) if isinstance(RED_COLOR, str) else RED_COLOR
+DARK_BG_QCOLOR = QColor(DARK_BG_COLOR) if isinstance(DARK_BG_COLOR, str) else DARK_BG_COLOR
+LIGHT_TEXT_QCOLOR = QColor(LIGHT_TEXT_COLOR) if isinstance(LIGHT_TEXT_COLOR, str) else LIGHT_TEXT_COLOR
+
+# Set alpha for the main background color
+# Adjust alpha (0-255) as needed for desired background transparency
+DARK_BG_QCOLOR.setAlpha(245)  # Increased from 230 to 245 for more opacity
 
 class ClassifierOverlay(QWidget):
-    exitOverlay = pyqtSignal()  # Signal to notify main app when overlay is closed
-    
+    exitOverlay = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowOpacity(0.95)
         self.running = False
         self.prediction = "N/A"
         self.confidence = 0.0
-        
-        # Set initial size
-        self.resize(280, 140)
-        
-        # Initialize UI
+        self.resize(300, 160) # Keep size consistent
         self.init_ui()
-        
-        # Position in top-right corner
         self.position_overlay()
-    
+        self._drag_position = QPoint()
+
     def init_ui(self):
         """Set up the overlay UI"""
-        # Main layout
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(15, 15, 15, 15)
-        self.layout.setSpacing(4)  # Reduce spacing between elements
-        
-        # Prediction display
+        # Margin should accommodate the glow_extent defined in paintEvent
+        glow_margin = 12  # Reduced from 25 to 12 for thinner margin
+        self.layout.setContentsMargins(glow_margin, glow_margin, glow_margin, glow_margin)
+        self.layout.setSpacing(6)
+
+        # --- UI Elements (Labels, Buttons) - Keep consistent ---
         self.prediction_label = QLabel("N/A")
-        self.prediction_label.setFont(QFont("Arial", 9, QFont.Bold))
-        self.prediction_label.setStyleSheet("color: white;")
+        self.prediction_label.setFont(QFont("Arial", 10, QFont.Bold))
+        self.prediction_label.setStyleSheet(f"color: {LIGHT_TEXT_QCOLOR.name()}; background-color: transparent;")
         self.prediction_label.setAlignment(Qt.AlignCenter)
-        
-        # Confidence display
+
         self.confidence_label = QLabel("0%")
-        self.confidence_label.setFont(QFont("Arial", 8))
-        self.confidence_label.setStyleSheet("color: white;")
+        self.confidence_label.setFont(QFont("Arial", 9))
+        self.confidence_label.setStyleSheet(f"color: {LIGHT_TEXT_QCOLOR.name()}; background-color: transparent;")
         self.confidence_label.setAlignment(Qt.AlignCenter)
-        
-        # Buttons layout
+
         buttons_layout = QHBoxLayout()
-        buttons_layout.setSpacing(20)  # Space between buttons
-        
-        # Button size matches the reference images
-        button_size = 40
-        
-        # Play/Pause button with basketball-themed styling
+        buttons_layout.setSpacing(25)
+
+        button_size = 45
+        button_radius = button_size / 2
+        button_border_color = RED_QCOLOR.name()
+        button_border_hover_qcolor = QColor(button_border_color)
+        button_border_hover_qcolor = button_border_hover_qcolor.lighter(140)
+        button_border_hover_qcolor.setHsv(button_border_hover_qcolor.hue(), max(0, int(button_border_hover_qcolor.saturation() * 0.7)), button_border_hover_qcolor.value())
+        button_border_hover_color = button_border_hover_qcolor.name()
+
+        button_bg_color = "#181818"
+        button_hover_bg_color = "#282828"
+        button_pressed_bg_color = "#383838"
+
         self.toggle_button = QPushButton()
         self.toggle_button.setFixedSize(button_size, button_size)
-        play_pause_style = """
-            QPushButton {
-                background-color: #111;
-                color: #f55;
-                border-radius: 20px;
-                border: 2px solid #f55;
+        play_pause_style = f"""
+            QPushButton {{
+                background-color: {button_bg_color};
+                color: {button_border_color};
+                border-radius: {button_radius}px;
+                border: 2px solid {button_border_color};
                 font-family: 'Arial';
-                font-size: 14px;
-                font-weight: bold;
-                text-align: center;
-            }
-            QPushButton:hover {
-                background-color: #222;
-                border: 2px solid #f77;
-                color: #f77;
-            }
-            QPushButton:pressed {
-                background-color: #333;
-            }
-        """
-        self.toggle_button.setStyleSheet(play_pause_style)
-        # Start with play button (▶) since we're not running yet
-        self.toggle_button.setText("▶")
-        self.toggle_button.clicked.connect(self.toggle_capture)
-        
-        # Exit overlay button
-        self.exit_button = QPushButton()
-        self.exit_button.setFixedSize(button_size, button_size)
-        self.exit_button.setStyleSheet("""
-            QPushButton {
-                background-color: #111;
-                color: #f55;
-                border-radius: 20px;
-                border: 2px solid #f55;
-                font-family: Arial;
                 font-size: 16px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #222;
-                border: 2px solid #f77;
-                color: #f77;
-            }
-            QPushButton:pressed {
-                background-color: #333;
-            }
-        """)
+                text-align: center;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {button_hover_bg_color};
+                border: 2px solid {button_border_hover_color};
+                color: {button_border_hover_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {button_pressed_bg_color};
+            }}
+        """
+        self.toggle_button.setStyleSheet(play_pause_style)
+        self.toggle_button.setText("▶")
+        self.toggle_button.clicked.connect(self.toggle_capture)
+
+        self.exit_button = QPushButton()
+        self.exit_button.setFixedSize(button_size, button_size)
+        exit_button_style = f"""
+            QPushButton {{
+                background-color: {button_bg_color};
+                color: {button_border_color};
+                border-radius: {button_radius}px;
+                border: 2px solid {button_border_color};
+                font-family: Arial;
+                font-size: 18px;
+                font-weight: bold;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {button_hover_bg_color};
+                border: 2px solid {button_border_hover_color};
+                color: {button_border_hover_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {button_pressed_bg_color};
+            }}
+        """
+        self.exit_button.setStyleSheet(exit_button_style)
         self.exit_button.setText("×")
         self.exit_button.clicked.connect(self.exit_overlay_mode)
-        
-        # Add buttons to layout with spacing
+
         buttons_layout.addStretch()
         buttons_layout.addWidget(self.toggle_button)
         buttons_layout.addWidget(self.exit_button)
         buttons_layout.addStretch()
-        
-        # Add all elements to main layout
+
         self.layout.addWidget(self.prediction_label)
-        self.layout.addSpacing(2)  # Small spacing after prediction
+        self.layout.addSpacing(5)
         self.layout.addWidget(self.confidence_label)
-        self.layout.addSpacing(10)  # Spacing before buttons
+        self.layout.addSpacing(15)
         self.layout.addLayout(buttons_layout)
-    
+        # --- End of UI Elements ---
+
     def position_overlay(self):
-        """Position the overlay in the top-right corner of the screen"""
-        screen_geometry = QApplication.desktop().screenGeometry()
+        """Position the overlay in the top right corner."""
+        try:
+            screen_geometry = QApplication.primaryScreen().availableGeometry()
+        except AttributeError:
+             screen_geometry = QApplication.desktop().screenGeometry()
         self.move(screen_geometry.width() - self.width() - 20, 20)
-    
+
     def paintEvent(self, event):
-        """Custom paint event to create rounded corners with blur effect and gradient border"""
+        """Paint event for background and the layered rounded rectangle glow."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        
-        # Create shadow effect
-        shadow_rect = self.rect().adjusted(-3, -3, 3, 3)
-        shadow_color = QColor(0, 0, 0, 90)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        # Define base colors
+        bg_color_base = QColor(DARK_BG_QCOLOR) # Use base color for blending
+        red_color_base = QColor(RED_QCOLOR)   # Use base color for blending
+
+        # Define geometry
+        corner_radius = 20.0
+        glow_extent = 5  # Reduced from 18 to 10 for thinner gradient
+
+        # Rectangles defining the glow region and the solid background region
+        solid_bg_rect = QRectF(self.rect()).adjusted(glow_extent, glow_extent, -glow_extent, -glow_extent)
+        outer_glow_rect = QRectF(self.rect())
+
+        # Ensure the solid background rectangle is valid
+        if solid_bg_rect.width() <= 0 or solid_bg_rect.height() <= 0:
+            print("Warning: Widget size too small for defined glow extent. Drawing solid background.")
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(bg_color_base)) # Use brush for solid fill
+            painter.drawRoundedRect(self.rect(), corner_radius, corner_radius)
+            return
+
+        # --- Draw the Layered Rounded Rectangle Gradient ---
+
+        num_glow_layers = 60 # Increased layers for smoother transition
+
+        # Iterate from the outer edge inwards
+        for i in range(num_glow_layers):
+            # Calculate the blending factor for this layer (0 at outer edge, 1 at inner edge of glow)
+            lerp_factor = i / (num_glow_layers - 1) if num_glow_layers > 1 else 0.0
+
+            # Calculate the current rectangle for this layer
+            current_rect = QRectF(
+                outer_glow_rect.left() * (1.0 - lerp_factor) + solid_bg_rect.left() * lerp_factor,
+                outer_glow_rect.top() * (1.0 - lerp_factor) + solid_bg_rect.top() * lerp_factor,
+                outer_glow_rect.width() * (1.0 - lerp_factor) + solid_bg_rect.width() * lerp_factor,
+                outer_glow_rect.height() * (1.0 - lerp_factor) + solid_bg_rect.height() * lerp_factor
+            )
+
+            # Blend colors from RED_COLOR (outside, lerp_factor=0) to DARK_BG_COLOR (inside, lerp_factor=1)
+            current_red = int(red_color_base.red() * (1.0 - lerp_factor) + bg_color_base.red() * lerp_factor)
+            current_green = int(red_color_base.green() * (1.0 - lerp_factor) + bg_color_base.green() * lerp_factor)
+            current_blue = int(red_color_base.blue() * (1.0 - lerp_factor) + bg_color_base.blue() * lerp_factor)
+
+            # Calculate alpha fading from near-transparent at the outermost edge to
+            # the alpha of the background color at the innermost edge of the glow.
+            # This creates the merge effect with the background behind the overlay.
+            # Alpha goes from 0 (or a small start_alpha) to bg_color_base.alpha()
+            start_alpha = 0 # Start with full transparency at the outer edge
+            end_alpha = bg_color_base.alpha() # End with background color's alpha at the inner edge of glow band
+            current_alpha = int(start_alpha * (1.0 - lerp_factor) + end_alpha * lerp_factor)
+            current_alpha = min(255, max(0, current_alpha)) # Clamp alpha
+
+            # Create the color for the current layer
+            current_color = QColor(current_red, current_green, current_blue, current_alpha)
+
+            # Set pen color and thickness
+            painter.setPen(QPen(current_color, 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            painter.setBrush(Qt.NoBrush) # Don't fill the shape
+
+            # Draw the rounded rectangle border for the current layer
+            painter.drawRoundedRect(current_rect, corner_radius, corner_radius)
+
+        # --- Draw the Solid Inner Background ---
         painter.setPen(Qt.NoPen)
-        painter.setBrush(shadow_color)
-        painter.drawRoundedRect(shadow_rect, 16, 16)
-        
-        # Draw outer rectangle with red color for border base
-        outer_rect = self.rect()
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(255, 60, 60, 200))  # Red color
-        painter.drawRoundedRect(outer_rect, 14, 14)
-        
-        # Create gradient from border to background
-        border_width = 4  # Thicker border for more visible gradient
-        inner_rect = self.rect().adjusted(border_width, border_width, -border_width, -border_width)
-        
-        # Create radial gradient for a smooth transition
-        gradient = QRadialGradient(self.rect().center(), self.rect().width()/2)
-        gradient.setColorAt(0.8, QColor(20, 20, 20, 250))  # Inner background color
-        gradient.setColorAt(0.9, QColor(60, 20, 20, 250))  # Mid transition
-        gradient.setColorAt(1.0, QColor(255, 60, 60, 180))  # Outer border color
-        
-        # Draw inner rectangle with gradient
-        painter.setBrush(QColor(20, 20, 20, 250))  # Dark background
-        painter.drawRoundedRect(inner_rect, 10, 10)
-        
-        # Draw an additional gradient overlay for enhanced border effect
-        border_gradient = QLinearGradient(outer_rect.topLeft(), outer_rect.bottomRight())
-        border_gradient.setColorAt(0, QColor(255, 100, 100, 120))
-        border_gradient.setColorAt(0.5, QColor(255, 50, 50, 100))
-        border_gradient.setColorAt(1, QColor(200, 40, 40, 140))
-        
-        painter.setPen(QPen(QColor(255, 60, 60, 0), 1))  # Invisible pen
-        painter.setBrush(border_gradient)
-        
-        # Create path to draw only the border area (between outer and inner rects)
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(outer_rect), 14, 14)
-        inner_path = QPainterPath()
-        inner_path.addRoundedRect(QRectF(inner_rect), 10, 10)
-        path = path.subtracted(inner_path)
-        
-        # Draw the border with gradient
-        painter.drawPath(path)
-    
+        # Use a brush with the background color (including its alpha) for the solid fill
+        painter.setBrush(QBrush(bg_color_base))
+        painter.drawRoundedRect(solid_bg_rect, corner_radius, corner_radius)
+
+
     def mousePressEvent(self, event):
-        """Allow dragging the overlay around"""
+        """Handle mouse press for dragging."""
         if event.button() == Qt.LeftButton:
-            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            self._drag_position = event.globalPos() - self.frameGeometry().topLeft()
             event.accept()
-    
+
     def mouseMoveEvent(self, event):
-        """Move the overlay when dragged"""
+        """Handle mouse move for dragging."""
         if event.buttons() == Qt.LeftButton:
-            self.move(event.globalPos() - self.drag_position)
+            self.move(event.globalPos() - self._drag_position)
             event.accept()
-    
+
     def toggle_capture(self):
-        """Toggle capture state"""
+        """Toggle the running state and update the button text."""
         self.running = not self.running
-        
-        # Update button style for play/pause state
         if self.running:
-            # Use double vertical bar symbol for pause that looks cleaner
-            self.toggle_button.setText("‖")
+            self.toggle_button.setText("‖") # Pause symbol
         else:
-            # Use the same styling for the play button (red on black)
-            self.toggle_button.setText("▶")
-    
+            self.toggle_button.setText("▶") # Play symbol
+        self.update()
+
+
     def update_prediction(self, is_basketball, confidence):
-        """Update the prediction display"""
-        # Update prediction label
-        prediction_text = "BASKETBALL" if is_basketball else "NOT BASKETBALL"
-        self.prediction_label.setText(prediction_text)
-        
-        # Set color based on prediction
+        """Update the prediction labels."""
         if is_basketball:
-            self.prediction_label.setStyleSheet("color: #f66; font-weight: bold;")
+            prediction_text = "BASKETBALL"
+            prediction_color = RED_QCOLOR.name()
+            confidence_pct = confidence * 100
         else:
-            self.prediction_label.setStyleSheet("color: white; font-weight: bold;")
-        
-        # Update confidence
-        confidence_pct = confidence * 100 if is_basketball else (1 - confidence) * 100
+            prediction_text = "NOT BASKETBALL"
+            prediction_color = LIGHT_TEXT_QCOLOR.name()
+            confidence_pct = (1 - confidence) * 100
+
+        self.prediction_label.setText(prediction_text)
+        self.prediction_label.setStyleSheet(f"color: {prediction_color}; font-weight: bold; background-color: transparent;")
+
         self.confidence_label.setText(f"{confidence_pct:.1f}%")
-    
+        self.confidence_label.setStyleSheet(f"color: {LIGHT_TEXT_QCOLOR.name()}; background-color: transparent;")
+        self.update()
+
+
     def exit_overlay_mode(self):
-        """Exit overlay mode and emit signal to main app"""
+        """Hide the overlay and emit the exit signal."""
         self.hide()
         self.exitOverlay.emit()
-        
+
     def closeEvent(self, event):
-        """Clean up when widget is closed"""
-        event.accept() 
+        """Handle the window close event."""
+        self.exit_overlay_mode()
+        event.accept()
+
+# Example usage
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    overlay = ClassifierOverlay()
+    overlay.show()
+
+    def update_test():
+        """Simulate updating prediction data."""
+        import random
+        is_ball = random.choice([True, False])
+        conf = random.uniform(0.7, 0.99) if is_ball else random.uniform(0.6, 0.95)
+        if overlay.isVisible():
+            overlay.update_prediction(is_ball, conf)
+
+    timer = QTimer()
+    timer.timeout.connect(update_test)
+    timer.start(1500)
+
+    overlay.exitOverlay.connect(app.quit)
+
+    sys.exit(app.exec_())
